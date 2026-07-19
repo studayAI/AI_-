@@ -234,7 +234,7 @@ for message in st.session_state.messages: #遍历聊天信息
     #     st.chat_message("assistant").write(message["content"])
 
 #Logo
-st.logo("resources/虎牙.png")
+
 
 #创建OpenAI客户端
 client = OpenAI(
