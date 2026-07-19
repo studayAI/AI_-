@@ -16,11 +16,50 @@ st.set_page_config(
         'About': "# This is a header. This is an *extremely* cool app!"
     }
 )
+
+# ======================【美化CSS区域：全局渐变背景+聊天框样式】======================
+# 这里是渐变背景代码，替换了你原来的纯色背景
+st.markdown("""
+<style>
+/* 全局淡紫+浅蓝渐变背景 */
+.stApp {
+    background: linear-gradient(135deg,#f0e7ff,#e6f7ff);
+}
+/* 用户消息气泡样式 */
+.stChatMessage.user {
+    background-color: #e6f7ff;
+    border-radius: 12px;
+    padding: 10px;
+}
+/* AI回复气泡样式 */
+.stChatMessage.assistant {
+    background-color: #fff7e6;
+    border-radius: 12px;
+    padding: 10px;
+}
+/* 输入框圆角美化 */
+.stTextInput, .stTextArea {
+    border-radius: 8px;
+}
+/* 按钮渐变配色 */
+.stButton>button {
+    border-radius: 8px;
+    background: linear-gradient(90deg,#722ed1,#1890ff);
+    color:white;
+}
+/* 主标题居中 */
+h1 {
+    color:#1f2937;
+    text-align:center;
+}
+</style>
+""",unsafe_allow_html=True)
+# ==============================================================================
+
 #创建会话标识
 def create_session_time():
     return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    #st.session_state.current_session_time = datetime.now().strftime("%Y%m%d%H%M%S")
-#保存会话信息函数
+
 #保存会话信息函数
 def save_session_info():
     if st.session_state.current_session_time:
@@ -101,8 +140,11 @@ def delete_session(session_name):
         st.error("删除会话信息失败!")
 
 
-#大标题
-st.title("AI智能伴侣")
+# ======================【主页面大标题美化代码】======================
+# 替换了原来光秃秃的 st.title("AI智能伴侣")
+st.markdown("# 💜 AI智能伴侣", unsafe_allow_html=True)
+st.divider()
+# ===================================================================
 
 #系统提示词
 system_prompt = """你是一名的%s,你的名字叫%s，性别%s,请你%s的语气回答客户的问题.
@@ -133,9 +175,12 @@ if 'character' not in st.session_state:
 if 'current_session_time' not in st.session_state:
     st.session_state.current_session_time = create_session_time()
 
-#左侧边栏  #with是streamlit上下文管理器
+#左侧边栏
 with st.sidebar:
-    st.subheader("AI控制面板")
+    # ======================【侧边栏标题美化代码】======================
+    st.markdown("## 💜 AI智能伴侣控制台")
+    st.divider()
+    # =================================================================
 
     #新建会话
     if st.button("新建会话",width="stretch",icon="🖋️"):
@@ -143,17 +188,22 @@ with st.sidebar:
         save_session_info()
 
         #2.创建新的会话
-        #if st.session_state.messages or st.session_state.role or st.session_state.name or st.session_state.gender or st.session_state.character : #如果聊天信息不为空,则位True，否则位 False
         st.session_state.messages = []
         st.session_state.current_session_time = create_session_time()
         st.session_state.role = "秘书"
         st.session_state.name = "妖夜"
         st.session_state.gender = "女"
         st.session_state.character = "妩媚性感"
-        # save_session_info()
-        # st.rerun()  # 重新执行此文件渲染页面
+        st.rerun()
 
     st.subheader("伴侣信息")
+    # ======================【白色圆角卡片包裹4个输入框】======================
+    # 先打开卡片容器
+    st.markdown("""
+    <div style="background:white;padding:16px;border-radius:12px;box-shadow:0 2px 8px #eee;">
+    """,unsafe_allow_html=True)
+
+    # 4个输入框全部放在卡片内部（关键修复：之前写在卡片外面）
     #扮演角色
     role=st.text_input("请输入智能伴侣扮演的角色:",placeholder="请输入智能伴侣扮演的角色", value=st.session_state.role)
     if role != st.session_state.role:
@@ -170,7 +220,10 @@ with st.sidebar:
     character=st.text_area("请输入伴侣性格:",placeholder="请输入伴侣性格", value=st.session_state.character)
     if character != st.session_state.character:
         st.session_state.character = character
-    # 显示会话列表
+
+    # 闭合卡片容器（输入框写完再关闭div）
+    st.markdown("</div>",unsafe_allow_html=True)
+    # ======================================================================
 
     # 分割线
     st.divider()
@@ -223,18 +276,10 @@ with st.sidebar:
                 if st.button("", icon="🗑️", width="stretch", key=f"del_{sid}"):
                     delete_session(sid)
                     st.rerun()
+
 #展示聊天信息
-st.text(f"当前会话：{st.session_state.current_session_time}")
-#展示聊天信息
-for message in st.session_state.messages: #遍历聊天信息
+for message in st.session_state.messages:
     st.chat_message(message["role"]).write(message["content"])
-    # if message["role"] == "user":
-    #     st.chat_message("user").write(message["content"])
-    # else:
-    #     st.chat_message("assistant").write(message["content"])
-
-#Logo
-
 
 #创建OpenAI客户端
 client = OpenAI(
@@ -262,14 +307,8 @@ if prompt:
        extra_body={"thinking": {"type": "enabled"}}
    )
 
-   #调用AI大模型的返回结果(非流式输出的解析方式)
-   # print("--------->调用AI大模型的回答:", response.choices[0].message.content)
-   # st.chat_message("assistant").write(response.choices[0].message.content)
-
-   #调用AI大模型的返回结果(流式输出的解析方式)
-
-   response_message=st.empty() #创建一个空的组件，用于显示大模型流式输出的结果
-
+   #流式输出
+   response_message=st.empty()
    full_response = ""
    for chunk in response:
        if chunk.choices[0].delta.content is not None:
