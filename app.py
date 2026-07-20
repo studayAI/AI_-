@@ -113,16 +113,17 @@ def get_background_css():
                 with open(path, "rb") as f:
                     img_data = base64.b64encode(f.read()).decode()
 
-                # 使用 .replace() 插入，避免 f-string 花括号冲突
+                # 背景图注入到 Streamlit 实际的内容容器上
                 css = """
                 /* === 聊天区背景图 + 暗色蒙版 === */
-                .stApp {
+                .stApp,
+                [data-testid="stAppViewContainer"],
+                [data-testid="stAppViewBlockContainer"] {
                     background:
                         linear-gradient(rgba(5,0,0,0.78), rgba(8,0,8,0.82)),
-                        url(data:image/jpeg;base64,__IMG_DATA__);
-                    background-size: cover;
-                    background-position: center 30%;
-                    background-attachment: fixed;
+                        url(data:image/jpeg;base64,__IMG_DATA__) !important;
+                    background-size: cover !important;
+                    background-position: center 30% !important;
                 }
                 """
                 return css.replace("__IMG_DATA__", img_data)
@@ -140,9 +141,10 @@ def get_background_css():
 def _fallback_gradient():
     """默认暗色渐变背景（暗酒红→黑→深紫）"""
     return """
-    .stApp {
-        background: linear-gradient(160deg, #0d0000 0%, #1a0000 25%, #0a0010 55%, #050010 100%);
-        background-attachment: fixed;
+    .stApp,
+    [data-testid="stAppViewContainer"],
+    [data-testid="stAppViewBlockContainer"] {
+        background: linear-gradient(160deg, #0d0000 0%, #1a0000 25%, #0a0010 55%, #050010 100%) !important;
     }
     """
 
@@ -161,9 +163,6 @@ html, body, [data-testid="stAppViewContainer"] {
 
 /* ===== 主背景 ===== */
 __BG_CSS__
-[data-testid="stAppViewContainer"] {
-    background: transparent !important;
-}
 
 /* ===== 侧边栏：暗色玻璃质感 ===== */
 [data-testid="stSidebar"] {
