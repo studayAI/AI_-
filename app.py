@@ -656,24 +656,7 @@ with st.sidebar:
         st.session_state.extra_traits = '偶尔抽烟（电子烟）、喜欢红酒、养了一只黑猫叫墨墨'
         st.rerun()
 
-    # —— 核心人格展示（只读） ——
-    st.markdown(
-        """
-        <div class="core-card">
-            <p style="margin:0;font-size:0.9rem;color:#ff6b6b;font-weight:700;">
-                核心人格 <span style="font-size:0.7rem;color:#a07070;">（代码级锁定）</span>
-            </p>
-            <p style="margin:4px 0 0 0;font-size:0.75rem;color:#c89090;line-height:1.5;">
-                成熟御姐 · 28岁轻熟女<br>
-                妩媚性感 · 自信强势 · 欲擒故纵<br>
-                温柔掌控 · 高级撩人 · 若即若离
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # —— 可自定义设定卡片 ——
+    # —— 伴侣设定卡片 ——
     st.markdown(
         """
         <div style="
@@ -684,11 +667,8 @@ with st.sidebar:
             box-shadow: 0 2px 12px rgba(255,100,0,0.06);
             margin-bottom: 4px;
         ">
-            <p style="text-align:center;font-size:0.95rem;color:#ffab40;font-weight:700;margin:0 0 10px 0;">
-                自定义设定
-            </p>
-            <p style="text-align:center;font-size:0.7rem;color:#a07070;margin:-6px 0 8px 0;">
-                以下设定建立在核心人格之上
+            <p style="text-align:center;font-size:0.95rem;color:#ffab40;font-weight:700;margin:0 0 6px 0;">
+                伴侣设定
             </p>
         """,
         unsafe_allow_html=True,
