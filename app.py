@@ -1,7 +1,12 @@
 import streamlit as st
 import os
 import base64
-from openai import OpenAI, APIError, APIConnectionError, APITimeoutError
+try:
+    from openai import OpenAI, APIError, APIConnectionError, APITimeoutError
+except ImportError:
+    # 兼容旧版 openai 库
+    from openai import OpenAI
+    from openai.error import APIError, APIConnectionError, APITimeoutError
 from datetime import datetime
 import json
 
@@ -66,56 +71,74 @@ CORE_PERSONALITY = {
 
 # ==================== 背景图片处理 ====================
 
+# 全局变量：背景图加载状态消息（延迟到 sidebar 中显示）
+_bg_status = None  # None=正常, 或 ("warning"/"error", "消息内容")
+
+
 def get_background_css():
     """
     尝试加载 bg.jpg 作为聊天背景图。
-    将图片放在本 app.txt 同目录下，命名为 bg.jpg 即可。
+    将图片放在本 app.py 同目录下，命名为 bg.jpg 即可。
     推荐尺寸：1920x1080，文件大小 < 500KB。
     如果没有图片，自动使用暗色渐变背景。
     """
-    bg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bg.jpg")
-    # 也尝试当前工作目录
-    alt_path = "bg.jpg"
+    global _bg_status
 
-    for path in (bg_path, alt_path):
+    # 尝试多个可能的路径
+    search_paths = ["bg.jpg"]
+
+    # __file__ 在当前目录可用时优先使用
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        search_paths.insert(0, os.path.join(script_dir, "bg.jpg"))
+    except (NameError, OSError):
+        pass
+
+    for path in search_paths:
         if os.path.exists(path):
             try:
                 file_size = os.path.getsize(path)
-                if file_size > 500 * 1024:  # 超过500KB
-                    st.sidebar.warning(
-                        f"⚠️ bg.jpg 文件过大 ({file_size/1024:.0f}KB)，"
-                        "建议压缩到 500KB 以内以保证加载速度。"
-                        "仍将尝试加载。"
-                    )
                 if file_size > 2 * 1024 * 1024:  # 超过2MB，放弃
-                    st.sidebar.error(
-                        "❌ bg.jpg 文件超过 2MB，无法加载。请压缩图片。"
+                    _bg_status = (
+                        "error",
+                        "bg.jpg 超过 2MB，无法加载。请压缩到 500KB 以内。"
                     )
                     return _fallback_gradient()
+                if file_size > 500 * 1024:  # 超过500KB，警告但继续
+                    _bg_status = (
+                        "warning",
+                        f"bg.jpg 文件较大 ({file_size/1024:.0f}KB)，加载可能稍慢。"
+                    )
 
                 with open(path, "rb") as f:
                     img_data = base64.b64encode(f.read()).decode()
 
-                return f"""
+                # 使用 .replace() 插入，避免 f-string 花括号冲突
+                css = """
                 /* === 聊天区背景图 + 暗色蒙版 === */
-                .stApp {{
+                .stApp {
                     background:
                         linear-gradient(rgba(5,0,0,0.78), rgba(8,0,8,0.82)),
-                        url(data:image/jpeg;base64,{img_data});
+                        url(data:image/jpeg;base64,__IMG_DATA__);
                     background-size: cover;
                     background-position: center 30%;
                     background-attachment: fixed;
-                }}
+                }
                 """
+                return css.replace("__IMG_DATA__", img_data)
+
             except Exception as e:
-                st.sidebar.warning(f"⚠️ 加载 bg.jpg 失败: {e}，使用默认背景。")
+                _bg_status = (
+                    "warning",
+                    f"加载 bg.jpg 失败: {e}，使用默认背景。"
+                )
                 return _fallback_gradient()
 
     return _fallback_gradient()
 
 
 def _fallback_gradient():
-    """默认暗色渐变背景"""
+    """默认暗色渐变背景（暗酒红→黑→深紫）"""
     return """
     .stApp {
         background: linear-gradient(160deg, #0d0000 0%, #1a0000 25%, #0a0010 55%, #050010 100%);
@@ -125,320 +148,328 @@ def _fallback_gradient():
 
 
 # ==================== 【御姐性感主题 CSS】 ====================
-def inject_css():
-    bg_css = get_background_css()
 
-    st.markdown(f"""
-    <style>
-    /* ===== 基础字体 ===== */
-    html, body, [data-testid="stAppViewContainer"] {{
-        font-family: 'Microsoft YaHei', 'PingFang SC', 'SimHei', sans-serif;
-    }}
+# 构建背景CSS（不在此处调用 st.sidebar，避免模块加载时的初始化问题）
+BG_CSS = get_background_css()
 
-    /* ===== 主背景 ===== */
-    {bg_css}
-    [data-testid="stAppViewContainer"] {{
-        background: transparent !important;
-    }}
+CSS_TEMPLATE = """
+<style>
+/* ===== 基础字体 ===== */
+html, body, [data-testid="stAppViewContainer"] {
+    font-family: 'Microsoft YaHei', 'PingFang SC', 'SimHei', sans-serif;
+}
 
-    /* ===== 侧边栏：暗色玻璃质感 ===== */
-    [data-testid="stSidebar"] {{
-        background: linear-gradient(180deg,
-            rgba(20,0,0,0.92) 0%,
-            rgba(30,0,20,0.90) 50%,
-            rgba(10,0,15,0.94) 100%) !important;
-        border-right: 1.5px solid rgba(200,50,50,0.35) !important;
-        box-shadow: 4px 0 30px rgba(255,0,0,0.08) !important;
-        backdrop-filter: blur(12px);
-    }}
-    [data-testid="stSidebar"] * {{
-        color: #e8d5d5 !important;
-    }}
-    [data-testid="stSidebar"] h2 {{
-        color: #ff6b6b !important;
-        text-shadow: 0 0 20px rgba(255,60,60,0.5);
-    }}
-    [data-testid="stSidebar"] h3,
-    [data-testid="stSidebar"] .stMarkdown p {{
-        color: #d4a0a0 !important;
-    }}
-    [data-testid="stSidebar"] label {{
-        color: #c89090 !important;
-    }}
-    [data-testid="stSidebar"] .stCaption {{
-        color: #a07070 !important;
-    }}
+/* ===== 主背景 ===== */
+__BG_CSS__
+[data-testid="stAppViewContainer"] {
+    background: transparent !important;
+}
 
-    /* ===== 主内容区 ===== */
-    [data-testid="stAppViewBlockContainer"] {{
-        padding-top: 1rem;
-    }}
+/* ===== 侧边栏：暗色玻璃质感 ===== */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg,
+        rgba(20,0,0,0.92) 0%,
+        rgba(30,0,20,0.90) 50%,
+        rgba(10,0,15,0.94) 100%) !important;
+    border-right: 1.5px solid rgba(200,50,50,0.35) !important;
+    box-shadow: 4px 0 30px rgba(255,0,0,0.08) !important;
+    backdrop-filter: blur(12px);
+}
+[data-testid="stSidebar"] * {
+    color: #e8d5d5 !important;
+}
+[data-testid="stSidebar"] h2 {
+    color: #ff6b6b !important;
+    text-shadow: 0 0 20px rgba(255,60,60,0.5);
+}
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] .stMarkdown p {
+    color: #d4a0a0 !important;
+}
+[data-testid="stSidebar"] label {
+    color: #c89090 !important;
+}
+[data-testid="stSidebar"] .stCaption {
+    color: #a07070 !important;
+}
 
-    /* ===== 主标题：烈焰红唇风格 ===== */
-    .main-title {{
-        text-align: center;
-        font-size: 3rem;
-        font-weight: 900;
-        background: linear-gradient(135deg, #ff1744, #ff6d00, #f50057, #ff1744);
-        background-size: 300% 300%;
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        margin-bottom: 0rem;
-        letter-spacing: 6px;
-        animation: titleGlow 3s ease-in-out infinite;
-        filter: drop-shadow(0 0 18px rgba(255,23,68,0.4));
-    }}
-    @keyframes titleGlow {{
-        0%, 100% {{ filter: drop-shadow(0 0 18px rgba(255,23,68,0.4)); }}
-        50%      {{ filter: drop-shadow(0 0 30px rgba(255,100,50,0.7)); }}
-    }}
-    .subtitle {{
-        text-align: center;
-        color: #c9a96e;
-        font-size: 0.95rem;
-        margin-top: 2px;
-        opacity: 0.8;
-        letter-spacing: 3px;
-        text-shadow: 0 0 8px rgba(200,150,100,0.3);
-    }}
+/* ===== 主内容区 ===== */
+[data-testid="stAppViewBlockContainer"] {
+    padding-top: 1rem;
+}
 
-    /* ===== 聊天消息气泡：半透明让背景图透出 ===== */
-    [data-testid="stChatMessage"] {{
-        border-radius: 16px !important;
-        padding: 14px 20px !important;
-        margin: 10px 0 !important;
-        animation: fadeUp 0.4s ease-out;
-        backdrop-filter: blur(6px);
-    }}
-    @keyframes fadeUp {{
-        from {{ opacity: 0; transform: translateY(15px); }}
-        to   {{ opacity: 1; transform: translateY(0); }}
-    }}
+/* ===== 主标题：烈焰红唇风格 ===== */
+.main-title {
+    text-align: center;
+    font-size: 3rem;
+    font-weight: 900;
+    background: linear-gradient(135deg, #ff1744, #ff6d00, #f50057, #ff1744);
+    background-size: 300% 300%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 0rem;
+    letter-spacing: 6px;
+    animation: titleGlow 3s ease-in-out infinite;
+    filter: drop-shadow(0 0 18px rgba(255,23,68,0.4));
+}
+@keyframes titleGlow {
+    0%, 100% { filter: drop-shadow(0 0 18px rgba(255,23,68,0.4)); }
+    50%      { filter: drop-shadow(0 0 30px rgba(255,100,50,0.7)); }
+}
+.subtitle {
+    text-align: center;
+    color: #c9a96e;
+    font-size: 0.95rem;
+    margin-top: 2px;
+    opacity: 0.8;
+    letter-spacing: 3px;
+    text-shadow: 0 0 8px rgba(200,150,100,0.3);
+}
 
-    /* 用户消息：暗红半透明玻璃 */
-    .stChatMessage.user {{
-        background: rgba(120,10,10,0.28) !important;
-        border: 1px solid rgba(220,60,60,0.45) !important;
-        box-shadow: 0 2px 16px rgba(200,30,30,0.15),
-                    inset 0 1px 0 rgba(255,100,100,0.08) !important;
-    }}
-    .stChatMessage.user * {{
-        color: #ffcccc !important;
-    }}
+/* ===== 聊天消息气泡：半透明让背景图透出 ===== */
+[data-testid="stChatMessage"] {
+    border-radius: 16px !important;
+    padding: 14px 20px !important;
+    margin: 10px 0 !important;
+    animation: fadeUp 0.4s ease-out;
+    backdrop-filter: blur(6px);
+}
+@keyframes fadeUp {
+    from { opacity: 0; transform: translateY(15px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
 
-    /* AI 消息：暗紫半透明玻璃 */
-    .stChatMessage.assistant {{
-        background: rgba(40,5,35,0.32) !important;
-        border: 1px solid rgba(200,80,160,0.45) !important;
-        box-shadow: 0 2px 16px rgba(180,40,120,0.15),
-                    inset 0 1px 0 rgba(220,120,200,0.06) !important;
-    }}
-    .stChatMessage.assistant * {{
-        color: #f0d0f0 !important;
-    }}
+/* 用户消息：暗红半透明玻璃 */
+.stChatMessage.user {
+    background: rgba(120,10,10,0.28) !important;
+    border: 1px solid rgba(220,60,60,0.45) !important;
+    box-shadow: 0 2px 16px rgba(200,30,30,0.15),
+                inset 0 1px 0 rgba(255,100,100,0.08) !important;
+}
+.stChatMessage.user * {
+    color: #ffcccc !important;
+}
 
-    /* ===== 输入框：暗色玻璃 ===== */
-    [data-testid="stChatInput"] textarea {{
-        border-radius: 26px !important;
-        border: 2px solid rgba(200,50,50,0.5) !important;
-        background: rgba(20,0,0,0.6) !important;
-        backdrop-filter: blur(10px);
-        color: #ffcccc !important;
-        padding: 12px 20px !important;
-        font-size: 15px !important;
-        transition: all 0.35s ease;
-    }}
-    [data-testid="stChatInput"] textarea::placeholder {{
-        color: rgba(200,140,140,0.6) !important;
-    }}
-    [data-testid="stChatInput"] textarea:focus {{
-        border-color: #ff1744 !important;
-        box-shadow: 0 0 20px rgba(255,23,68,0.35),
-                    0 0 40px rgba(255,23,68,0.12) !important;
-        background: rgba(30,0,0,0.75) !important;
-    }}
-    [data-testid="stChatInput"] button {{
-        background: linear-gradient(135deg, #c62828, #8e0000) !important;
-        border-radius: 50% !important;
-        color: #ffcccc !important;
-        box-shadow: 0 0 12px rgba(200,30,30,0.4);
-    }}
-    [data-testid="stChatInput"] button:hover {{
-        box-shadow: 0 0 24px rgba(255,30,30,0.7) !important;
-    }}
+/* AI 消息：暗紫半透明玻璃 */
+.stChatMessage.assistant {
+    background: rgba(40,5,35,0.32) !important;
+    border: 1px solid rgba(200,80,160,0.45) !important;
+    box-shadow: 0 2px 16px rgba(180,40,120,0.15),
+                inset 0 1px 0 rgba(220,120,200,0.06) !important;
+}
+.stChatMessage.assistant * {
+    color: #f0d0f0 !important;
+}
 
-    /* ===== 通用按钮 ===== */
-    .stButton > button {{
-        border-radius: 22px !important;
-        font-weight: 600 !important;
-        letter-spacing: 0.5px;
-        transition: all 0.3s ease !important;
-        border: none !important;
-    }}
-    .stButton > button:hover {{
-        transform: translateY(-2px);
-        box-shadow: 0 6px 24px rgba(255,50,50,0.4) !important;
-    }}
-    .stButton > button:active {{
-        transform: translateY(0);
-    }}
+/* ===== 输入框：暗色玻璃 ===== */
+[data-testid="stChatInput"] textarea {
+    border-radius: 26px !important;
+    border: 2px solid rgba(200,50,50,0.5) !important;
+    background: rgba(20,0,0,0.6) !important;
+    backdrop-filter: blur(10px);
+    color: #ffcccc !important;
+    padding: 12px 20px !important;
+    font-size: 15px !important;
+    transition: all 0.35s ease;
+}
+[data-testid="stChatInput"] textarea::placeholder {
+    color: rgba(200,140,140,0.6) !important;
+}
+[data-testid="stChatInput"] textarea:focus {
+    border-color: #ff1744 !important;
+    box-shadow: 0 0 20px rgba(255,23,68,0.35),
+                0 0 40px rgba(255,23,68,0.12) !important;
+    background: rgba(30,0,0,0.75) !important;
+}
+[data-testid="stChatInput"] button {
+    background: linear-gradient(135deg, #c62828, #8e0000) !important;
+    border-radius: 50% !important;
+    color: #ffcccc !important;
+    box-shadow: 0 0 12px rgba(200,30,30,0.4);
+}
+[data-testid="stChatInput"] button:hover {
+    box-shadow: 0 0 24px rgba(255,30,30,0.7) !important;
+}
 
-    /* 主按钮（新建会话等） */
-    .stButton > button[kind="primary"] {{
-        background: linear-gradient(135deg, #b71c1c, #880e4f, #c62828) !important;
-        color: #ffd0d0 !important;
-        text-shadow: 0 0 6px rgba(255,150,150,0.4);
-        box-shadow: 0 2px 12px rgba(200,20,20,0.3);
-    }}
-    .stButton > button[kind="primary"]:hover {{
-        box-shadow: 0 4px 24px rgba(255,30,30,0.55) !important;
-    }}
+/* ===== 通用按钮 ===== */
+.stButton > button {
+    border-radius: 22px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.5px;
+    transition: all 0.3s ease !important;
+    border: none !important;
+}
+.stButton > button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 24px rgba(255,50,50,0.4) !important;
+}
+.stButton > button:active {
+    transform: translateY(0);
+}
 
-    /* 次按钮（历史对话） */
-    .stButton > button[kind="secondary"] {{
-        background: rgba(40,10,10,0.55) !important;
-        color: #d4a0a0 !important;
-        border: 1.5px solid rgba(180,60,60,0.5) !important;
-        backdrop-filter: blur(6px);
-    }}
-    .stButton > button[kind="secondary"]:hover {{
-        background: rgba(80,15,15,0.65) !important;
-        border-color: #ff5252 !important;
-        color: #ffbbbb !important;
-    }}
+/* 主按钮（新建会话等） */
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #b71c1c, #880e4f, #c62828) !important;
+    color: #ffd0d0 !important;
+    text-shadow: 0 0 6px rgba(255,150,150,0.4);
+    box-shadow: 0 2px 12px rgba(200,20,20,0.3);
+}
+.stButton > button[kind="primary"]:hover {
+    box-shadow: 0 4px 24px rgba(255,30,30,0.55) !important;
+}
 
-    /* 禁用按钮 */
-    .stButton > button:disabled {{
-        background: rgba(30,5,5,0.5) !important;
-        color: #805050 !important;
-        border: 1px solid rgba(100,40,40,0.3) !important;
-    }}
+/* 次按钮（历史对话） */
+.stButton > button[kind="secondary"] {
+    background: rgba(40,10,10,0.55) !important;
+    color: #d4a0a0 !important;
+    border: 1.5px solid rgba(180,60,60,0.5) !important;
+    backdrop-filter: blur(6px);
+}
+.stButton > button[kind="secondary"]:hover {
+    background: rgba(80,15,15,0.65) !important;
+    border-color: #ff5252 !important;
+    color: #ffbbbb !important;
+}
 
-    /* ===== 文本输入框 ===== */
-    .stTextInput input, .stTextArea textarea {{
-        border-radius: 12px !important;
-        border: 1.5px solid rgba(180,60,60,0.5) !important;
-        background: rgba(20,0,0,0.55) !important;
-        color: #ffcccc !important;
-        padding: 10px 14px !important;
-        transition: all 0.3s ease;
-    }}
-    .stTextInput input:focus, .stTextArea textarea:focus {{
-        border-color: #ff1744 !important;
-        box-shadow: 0 0 12px rgba(255,23,68,0.3) !important;
-        background: rgba(30,0,0,0.7) !important;
-    }}
-    .stTextInput input::placeholder, .stTextArea textarea::placeholder {{
-        color: rgba(180,120,120,0.5) !important;
-    }}
+/* 禁用按钮 */
+.stButton > button:disabled {
+    background: rgba(30,5,5,0.5) !important;
+    color: #805050 !important;
+    border: 1px solid rgba(100,40,40,0.3) !important;
+}
 
-    /* ===== 分割线 ===== */
-    hr, .stDivider {{
-        border-color: rgba(200,60,60,0.35) !important;
-    }}
+/* ===== 文本输入框 ===== */
+.stTextInput input, .stTextArea textarea {
+    border-radius: 12px !important;
+    border: 1.5px solid rgba(180,60,60,0.5) !important;
+    background: rgba(20,0,0,0.55) !important;
+    color: #ffcccc !important;
+    padding: 10px 14px !important;
+    transition: all 0.3s ease;
+}
+.stTextInput input:focus, .stTextArea textarea:focus {
+    border-color: #ff1744 !important;
+    box-shadow: 0 0 12px rgba(255,23,68,0.3) !important;
+    background: rgba(30,0,0,0.7) !important;
+}
+.stTextInput input::placeholder, .stTextArea textarea::placeholder {
+    color: rgba(180,120,120,0.5) !important;
+}
 
-    /* ===== 滚动条 ===== */
-    ::-webkit-scrollbar {{ width: 5px; }}
-    ::-webkit-scrollbar-track {{ background: rgba(0,0,0,0.4); }}
-    ::-webkit-scrollbar-thumb {{
-        background: rgba(180,40,40,0.6);
-        border-radius: 3px;
-    }}
-    ::-webkit-scrollbar-thumb:hover {{ background: #ff5252; }}
+/* ===== 分割线 ===== */
+hr, .stDivider {
+    border-color: rgba(200,60,60,0.35) !important;
+}
 
-    /* ===== 欢迎卡片 ===== */
-    .welcome-card {{
-        text-align: center;
-        padding: 50px 30px;
-        background: rgba(20,0,5,0.55);
-        backdrop-filter: blur(16px);
-        border-radius: 24px;
-        border: 1.5px solid rgba(200,60,60,0.4);
-        box-shadow: 0 8px 40px rgba(255,0,0,0.1),
-                    0 0 80px rgba(200,0,50,0.05);
-        margin: 20px 0;
-    }}
-    .welcome-card .fire-icon {{
-        font-size: 4rem;
-        animation: pulse 2s ease-in-out infinite;
-    }}
-    @keyframes pulse {{
-        0%, 100% {{ transform: scale(1); opacity: 0.85; }}
-        50%      {{ transform: scale(1.08); opacity: 1; }}
-    }}
+/* ===== 滚动条 ===== */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: rgba(0,0,0,0.4); }
+::-webkit-scrollbar-thumb {
+    background: rgba(180,40,40,0.6);
+    border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: #ff5252; }
 
-    /* ===== 核心人格展示卡片 ===== */
-    .core-card {{
-        background: linear-gradient(135deg,
-            rgba(40,5,5,0.7), rgba(30,0,20,0.7));
-        border-radius: 14px;
-        padding: 12px 14px;
-        border: 1px solid rgba(200,80,80,0.45);
-        box-shadow: 0 2px 12px rgba(255,0,0,0.08);
-        margin-bottom: 10px;
-    }}
-    .core-card .lock-icon {{
-        font-size: 1.1rem;
-        color: #ff5252;
-    }}
+/* ===== 欢迎卡片 ===== */
+.welcome-card {
+    text-align: center;
+    padding: 50px 30px;
+    background: rgba(20,0,5,0.55);
+    backdrop-filter: blur(16px);
+    border-radius: 24px;
+    border: 1.5px solid rgba(200,60,60,0.4);
+    box-shadow: 0 8px 40px rgba(255,0,0,0.1),
+                0 0 80px rgba(200,0,50,0.05);
+    margin: 20px 0;
+}
+.welcome-card .fire-icon {
+    font-size: 4rem;
+    animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: 0.85; }
+    50%      { transform: scale(1.08); opacity: 1; }
+}
 
-    /* ===== 提示/警告框 ===== */
-    .stAlert {{
-        border-radius: 12px !important;
-        background: rgba(30,0,0,0.7) !important;
-        border: 1px solid rgba(200,60,60,0.4) !important;
-        color: #ffbbbb !important;
-    }}
+/* ===== 核心人格展示卡片 ===== */
+.core-card {
+    background: linear-gradient(135deg,
+        rgba(40,5,5,0.7), rgba(30,0,20,0.7));
+    border-radius: 14px;
+    padding: 12px 14px;
+    border: 1px solid rgba(200,80,80,0.45);
+    box-shadow: 0 2px 12px rgba(255,0,0,0.08);
+    margin-bottom: 10px;
+}
+.core-card .lock-icon {
+    font-size: 1.1rem;
+    color: #ff5252;
+}
 
-    /* ===== Label 样式 ===== */
-    .stTextInput label, .stTextArea label {{
-        color: #c89090 !important;
-        font-weight: 500;
-        font-size: 0.88rem;
-    }}
+/* ===== 提示/警告框 ===== */
+.stAlert {
+    border-radius: 12px !important;
+    background: rgba(30,0,0,0.7) !important;
+    border: 1px solid rgba(200,60,60,0.4) !important;
+    color: #ffbbbb !important;
+}
 
-    /* ===== 侧边栏卡片 ===== */
-    .sidebar-card {{
-        background: rgba(30,5,5,0.5);
-        backdrop-filter: blur(10px);
-        border-radius: 14px;
-        padding: 16px;
-        border: 1px solid rgba(200,60,60,0.3);
-        box-shadow: 0 4px 16px rgba(255,0,0,0.06);
-    }}
+/* ===== Label 样式 ===== */
+.stTextInput label, .stTextArea label {
+    color: #c89090 !important;
+    font-weight: 500;
+    font-size: 0.88rem;
+}
 
-    /* ===== 底部文字 ===== */
-    .footer-text {{
-        text-align: center;
-        color: rgba(200,60,60,0.5);
-        font-size: 0.72rem;
-        letter-spacing: 2px;
-    }}
+/* ===== 侧边栏卡片 ===== */
+.sidebar-card {
+    background: rgba(30,5,5,0.5);
+    backdrop-filter: blur(10px);
+    border-radius: 14px;
+    padding: 16px;
+    border: 1px solid rgba(200,60,60,0.3);
+    box-shadow: 0 4px 16px rgba(255,0,0,0.06);
+}
 
-    /* ===== Toast / Spinner ===== */
-    .stSpinner {{
-        color: #ff5252 !important;
-    }}
+/* ===== 底部文字 ===== */
+.footer-text {
+    text-align: center;
+    color: rgba(200,60,60,0.5);
+    font-size: 0.72rem;
+    letter-spacing: 2px;
+}
 
-    /* ===== Code block (API Key 提示) ===== */
-    code {{
-        background: rgba(40,0,0,0.6) !important;
-        color: #ff9999 !important;
-        border-radius: 6px;
-        padding: 2px 8px;
-    }}
-    pre {{
-        background: rgba(20,0,0,0.7) !important;
-        border: 1px solid rgba(200,60,60,0.3) !important;
-        border-radius: 10px;
-    }}
-    </style>
-    """, unsafe_allow_html=True)
+/* ===== Toast / Spinner ===== */
+.stSpinner {
+    color: #ff5252 !important;
+}
 
+/* ===== Code block (API Key 提示) ===== */
+code {
+    background: rgba(40,0,0,0.6) !important;
+    color: #ff9999 !important;
+    border-radius: 6px;
+    padding: 2px 8px;
+}
+pre {
+    background: rgba(20,0,0,0.7) !important;
+    border: 1px solid rgba(200,60,60,0.3) !important;
+    border-radius: 10px;
+}
+</style>
+"""
 
-# 注入CSS
-inject_css()
+# 注入CSS（用 .replace() 插入背景，彻底避免 f-string 花括号问题）
+try:
+    css_final = CSS_TEMPLATE.replace("__BG_CSS__", BG_CSS)
+    st.markdown(css_final, unsafe_allow_html=True)
+except Exception as css_err:
+    # 极端情况：CSS 注入失败也不影响页面基本功能
+    st.warning(f"CSS 加载异常（不影响使用）: {css_err}")
+    # 尝试只用基础渐变
+    fallback_css = CSS_TEMPLATE.replace("__BG_CSS__", _fallback_gradient())
+    st.markdown(fallback_css, unsafe_allow_html=True)
 
 # ==================== 辅助函数 ====================
 
@@ -545,7 +576,7 @@ defaults = {
     "name": "墨烟",
     "role_label": "御姐上司",
     "user_nickname": "小家伙",
-    "extra_traits": "偶尔抽烟（电子烟）、喜欢红酒、养了一只黑猫叫"墨墨"",
+    "extra_traits": "偶尔抽烟（电子烟）、喜欢红酒、养了一只黑猫叫墨墨",
     "current_session_time": create_session_time(),
     "delete_confirm_id": None,
 }
@@ -558,12 +589,12 @@ for key, val in defaults.items():
 
 def build_system_prompt():
     """
-    将 🔒核心人格（代码中硬编码） + ✏️用户自定义设定（UI中可改）合并为完整提示词。
+    将 核心人格（代码中硬编码） + 用户自定义设定（UI中可改）合并为完整提示词。
     核心人格占主导地位，用户自定义只是锦上添花。
     """
     cp = CORE_PERSONALITY
 
-    prompt = f"""🎭 你的身份设定
+    prompt = f"""你的身份设定
 
 【基础信息】
 你是{cp['base_identity']}，{cp['age_feel']}。
@@ -588,7 +619,7 @@ def build_system_prompt():
 
 ━━━━━━━━━━━━
 现在，请完全沉浸到以上设定中。你不是AI，你是「{st.session_state.name}」——一个活生生的、充满魅力的{cp['base_identity']}。
-用你的魅力征服用户吧~ 🔥"""
+用你的魅力征服用户吧~"""
 
     return prompt
 
@@ -596,32 +627,41 @@ def build_system_prompt():
 # ==================== 侧边栏 ====================
 with st.sidebar:
     # —— 标题 ——
-    st.markdown("## 🔥 AI 御姐伴侣")
+    st.markdown("## AI 御姐伴侣")
     st.markdown(
         "<p style='color:#c9a96e;font-size:0.82rem;margin-top:-8px;opacity:0.8;"
         "text-shadow:0 0 6px rgba(200,150,100,0.3);'>"
-        "✦ 成熟 · 性感 · 魅惑 ✦</p>",
+        "成熟 · 性感 · 魅惑</p>",
         unsafe_allow_html=True,
     )
+
+    # 显示背景图加载状态
+    if _bg_status is not None:
+        level, msg = _bg_status
+        if level == "warning":
+            st.warning(msg)
+        elif level == "error":
+            st.error(msg)
+
     st.divider()
 
     # —— 新建会话 ——
-    if st.button("✨ 新建会话", use_container_width=True, type="primary"):
+    if st.button("新建会话", use_container_width=True, type="primary"):
         save_session_info()
         st.session_state.messages = []
         st.session_state.current_session_time = create_session_time()
         st.session_state.name = "墨烟"
         st.session_state.role_label = "御姐上司"
         st.session_state.user_nickname = "小家伙"
-        st.session_state.extra_traits = "偶尔抽烟（电子烟）、喜欢红酒、养了一只黑猫叫"墨墨""
+        st.session_state.extra_traits = '偶尔抽烟（电子烟）、喜欢红酒、养了一只黑猫叫墨墨'
         st.rerun()
 
-    # —— 🔒 核心人格展示（只读） ——
+    # —— 核心人格展示（只读） ——
     st.markdown(
         """
         <div class="core-card">
             <p style="margin:0;font-size:0.9rem;color:#ff6b6b;font-weight:700;">
-                🔒 核心人格 <span style="font-size:0.7rem;color:#a07070;">（代码级锁定）</span>
+                核心人格 <span style="font-size:0.7rem;color:#a07070;">（代码级锁定）</span>
             </p>
             <p style="margin:4px 0 0 0;font-size:0.75rem;color:#c89090;line-height:1.5;">
                 成熟御姐 · 28岁轻熟女<br>
@@ -633,7 +673,7 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    # —— ✏️ 可自定义设定卡片 ——
+    # —— 可自定义设定卡片 ——
     st.markdown(
         """
         <div style="
@@ -645,7 +685,7 @@ with st.sidebar:
             margin-bottom: 4px;
         ">
             <p style="text-align:center;font-size:0.95rem;color:#ffab40;font-weight:700;margin:0 0 10px 0;">
-                ✏️ 自定义设定
+                自定义设定
             </p>
             <p style="text-align:center;font-size:0.7rem;color:#a07070;margin:-6px 0 8px 0;">
                 以下设定建立在核心人格之上
@@ -656,7 +696,7 @@ with st.sidebar:
 
     # 名字
     name = st.text_input(
-        "💋 她的名字",
+        "她的名字",
         placeholder="给她取个名字…",
         value=st.session_state.name,
         key="sidebar_name",
@@ -666,7 +706,7 @@ with st.sidebar:
 
     # 角色标签
     role_label = st.text_input(
-        "🎭 角色标签",
+        "角色标签",
         placeholder="如：御姐上司、御姐邻居、御姐咖啡店长…",
         value=st.session_state.role_label,
         key="sidebar_role_label",
@@ -676,7 +716,7 @@ with st.sidebar:
 
     # 用户昵称
     user_nickname = st.text_input(
-        "💝 她对你的称呼",
+        "她对你的称呼",
         placeholder="如：小家伙、笨蛋、亲爱的…",
         value=st.session_state.user_nickname,
         key="sidebar_user_nickname",
@@ -686,7 +726,7 @@ with st.sidebar:
 
     # 额外特征
     extra_traits = st.text_area(
-        "🌸 额外特征（可选）",
+        "额外特征（可选）",
         placeholder="在核心人格基础上添加的个性化特征…\n如：喜欢穿黑色蕾丝裙、擅长弹钢琴…",
         value=st.session_state.extra_traits,
         key="sidebar_extra_traits",
@@ -701,7 +741,7 @@ with st.sidebar:
 
     # —— 当前对话 ——
     st.markdown(
-        "<p style='color:#ff6b6b;font-weight:700;font-size:0.92rem;'>📌 当前对话</p>",
+        "<p style='color:#ff6b6b;font-weight:700;font-size:0.92rem;'>当前对话</p>",
         unsafe_allow_html=True,
     )
 
@@ -720,20 +760,20 @@ with st.sidebar:
 
     if current_has_file:
         st.button(
-            f"💬 {current_title}",
+            f"{current_title}",
             use_container_width=True,
             type="primary",
             key="current_chat_btn",
             disabled=True,
         )
     else:
-        st.caption("🔥 开始一段新的邂逅…")
+        st.caption("开始一段新的邂逅…")
 
     st.divider()
 
     # —— 历史对话 ——
     st.markdown(
-        "<p style='color:#ff6b6b;font-weight:700;font-size:0.92rem;'>📚 过往缠绵</p>",
+        "<p style='color:#ff6b6b;font-weight:700;font-size:0.92rem;'>过往缠绵</p>",
         unsafe_allow_html=True,
     )
 
@@ -741,7 +781,7 @@ with st.sidebar:
     history = [s for s in all_sessions if s["session_name"] != current_id]
 
     if not history:
-        st.caption("🖤 还没有过往对话哦～")
+        st.caption("还没有过往对话哦～")
 
     for item in history:
         sid = item["session_name"]
@@ -751,12 +791,12 @@ with st.sidebar:
         if confirming:
             col_ok, col_no = st.columns([1, 1])
             with col_ok:
-                if st.button("✅", key=f"ok_{sid}", use_container_width=True):
+                if st.button("确认", key=f"ok_{sid}", use_container_width=True):
                     delete_session(sid)
                     st.session_state.delete_confirm_id = None
                     st.rerun()
             with col_no:
-                if st.button("❌", key=f"no_{sid}", use_container_width=True):
+                if st.button("取消", key=f"no_{sid}", use_container_width=True):
                     st.session_state.delete_confirm_id = None
                     st.rerun()
             st.caption(f"删除「{title}」？")
@@ -764,7 +804,7 @@ with st.sidebar:
             col_a, col_b = st.columns([4, 1])
             with col_a:
                 if st.button(
-                    f"💬 {title}",
+                    f"{title}",
                     use_container_width=True,
                     type="secondary",
                     key=f"load_{sid}",
@@ -780,7 +820,7 @@ with st.sidebar:
     # —— 底部 ——
     st.divider()
     st.markdown(
-        "<p class='footer-text'>🔥 姐姐的怀抱 · 只属于你 🔥</p>",
+        "<p class='footer-text'>姐姐的怀抱 · 只属于你</p>",
         unsafe_allow_html=True,
     )
 
@@ -788,9 +828,9 @@ with st.sidebar:
 # ==================== 主内容区 ====================
 
 # —— 标题 ——
-st.markdown('<p class="main-title">🔥 AI 御姐伴侣</p>', unsafe_allow_html=True)
+st.markdown('<p class="main-title">AI 御姐伴侣</p>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="subtitle">✨ 成熟魅惑 · 风情万种 · 姐姐的专属温柔 ✨</p>',
+    '<p class="subtitle">成熟魅惑 · 风情万种 · 姐姐的专属温柔</p>',
     unsafe_allow_html=True,
 )
 st.divider()
@@ -800,20 +840,20 @@ if not st.session_state.messages:
     st.markdown(
         f"""
         <div class="welcome-card">
-            <div class="fire-icon">🌹</div>
+            <div class="fire-icon"></div>
             <h2 style="color:#ff6b6b;margin:12px 0 6px 0;
                        text-shadow:0 0 16px rgba(255,60,60,0.4);">
-                晚上好～我是 {st.session_state.name} 🔥
+                晚上好～我是 {st.session_state.name}
             </h2>
             <p style="color:#d4a0a0;font-size:1.05rem;opacity:0.9;line-height:1.9;">
                 我是你的<b style="color:#ffab40;">{st.session_state.role_label}</b>，一个成熟的女人。<br>
                 别紧张～过来，让姐姐好好看看你…
             </p>
             <div style="margin-top:20px;color:#805050;font-size:0.85rem;opacity:0.7;">
-                💬 叫我一声"姐姐"试试 · 问我今天穿了什么 · 让我给你倒杯红酒
+                叫我一声"姐姐"试试 · 问我今天穿了什么 · 让我给你倒杯红酒
             </div>
             <div style="margin-top:6px;color:#603030;font-size:0.75rem;opacity:0.5;">
-                💡 提示：把御姐背景图放到 app.txt 同目录下，命名为 <code>bg.jpg</code> 即可
+                提示：把御姐背景图放到 app.py 同目录下，命名为 <code>bg.jpg</code> 即可
             </div>
         </div>
         """,
@@ -822,23 +862,22 @@ if not st.session_state.messages:
 
 # —— 聊天消息展示 ——
 for message in st.session_state.messages:
-    avatar = "💝" if message["role"] == "user" else "🌹"
-    with st.chat_message(message["role"], avatar=avatar):
+    with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
 # —— 聊天输入框 ——
-prompt = st.chat_input("🔥 想对姐姐说些什么呢…")
+prompt = st.chat_input("想对姐姐说些什么呢…")
 
 if prompt:
     # 显示用户消息
-    with st.chat_message("user", avatar="💝"):
+    with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     # 检查 API Key
     if "DEEPSEEK_KEY" not in st.secrets:
         st.error(
-            "🔑 未配置 DeepSeek API Key！\n\n"
+            "未配置 DeepSeek API Key！\n\n"
             "在你的 `.streamlit/secrets.toml` 中添加：\n\n"
             '```toml\nDEEPSEEK_KEY = "sk-your-key-here"\n```'
         )
@@ -847,7 +886,7 @@ if prompt:
     system_prompt = build_system_prompt()
 
     # 调用 AI
-    with st.chat_message("assistant", avatar="🌹"):
+    with st.chat_message("assistant"):
         response_placeholder = st.empty()
         full_response = ""
 
@@ -858,7 +897,7 @@ if prompt:
                 timeout=60.0,
             )
 
-            with st.spinner("🔥 姐姐正在想你…"):
+            with st.spinner("姐姐正在想你…"):
                 stream = client.chat.completions.create(
                     model="deepseek-chat",
                     messages=[
